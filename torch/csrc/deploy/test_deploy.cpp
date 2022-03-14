@@ -2,9 +2,10 @@
 #include <gtest/gtest.h>
 #include <cstring>
 
-#include <c10/util/irange.h>
 #include <libgen.h>
+#include <torch/csrc/deploy/ArrayRef.h>
 #include <torch/csrc/deploy/deploy.h>
+#include <torch/csrc/deploy/irange.h>
 #include <torch/script.h>
 #include <torch/torch.h>
 
@@ -102,7 +103,7 @@ TEST(TorchpyTest, MultiSerialSimpleModel) {
   size_t ninterp = 3;
   std::vector<at::Tensor> outputs;
 
-  for (const auto i : c10::irange(ninterp)) {
+  for (const auto i : multipy::irange(ninterp)) {
     (void)i;
     outputs.push_back(model({input.alias()}).toTensor());
   }
@@ -111,7 +112,7 @@ TEST(TorchpyTest, MultiSerialSimpleModel) {
   auto ref_output = ref_model.forward({input.alias()}).toTensor();
 
   // Compare all to reference
-  for (const auto i : c10::irange(ninterp)) {
+  for (const auto i : multipy::irange(ninterp)) {
     ASSERT_TRUE(ref_output.equal(outputs[i]));
   }
 
@@ -146,11 +147,11 @@ TEST(TorchpyTest, ThreadedSimpleModel) {
   std::vector<at::Tensor> outputs;
 
   std::vector<std::future<at::Tensor>> futures;
-  for (const auto i : c10::irange(nthreads)) {
+  for (const auto i : multipy::irange(nthreads)) {
     (void)i;
     futures.push_back(std::async(std::launch::async, [&model]() {
       auto input = torch::ones({10, 20});
-      for (const auto j : c10::irange(100)) {
+      for (const auto j : multipy::irange(100)) {
         (void)j;
         model({input.alias()}).toTensor();
       }
@@ -158,7 +159,7 @@ TEST(TorchpyTest, ThreadedSimpleModel) {
       return result;
     }));
   }
-  for (const auto i : c10::irange(nthreads)) {
+  for (const auto i : multipy::irange(nthreads)) {
     outputs.push_back(futures[i].get());
   }
 
@@ -166,7 +167,7 @@ TEST(TorchpyTest, ThreadedSimpleModel) {
   auto ref_output = ref_model.forward({input.alias()}).toTensor();
 
   // Compare all to reference
-  for (const auto i : c10::irange(nthreads)) {
+  for (const auto i : multipy::irange(nthreads)) {
     ASSERT_TRUE(ref_output.equal(outputs[i]));
   }
 }
@@ -182,13 +183,14 @@ TEST(TorchpyTest, ErrorsReplicatingObj) {
   auto obj = session1.fromMovable(replicatedObj);
   // should throw an error when trying to access obj from different session
   // NOLINTNEXTLINE(hicpp-avoid-goto,cppcoreguidelines-avoid-goto)
-  EXPECT_THROW(session2.createMovable(obj), c10::Error);
+  EXPECT_THROW(session2.createMovable(obj), std::runtime_error);
   try {
     session2.createMovable(obj);
-  } catch (c10::Error& error) {
+  } catch (std::runtime_error& error) {
     EXPECT_TRUE(
-        error.msg().find(
-            "Cannot create movable from an object that lives in different session") !=
+        std::string(error.what())
+            .find(
+                "Cannot create movable from an object that lives in different session") !=
         std::string::npos);
   }
 }
@@ -197,15 +199,15 @@ TEST(TorchpyTest, ThrowsSafely) {
   // See explanation in deploy.h
   torch::deploy::InterpreterManager manager(3);
   // NOLINTNEXTLINE(hicpp-avoid-goto,cppcoreguidelines-avoid-goto)
-  EXPECT_THROW(manager.loadPackage("some garbage path"), c10::Error);
+  EXPECT_THROW(manager.loadPackage("some garbage path"), std::runtime_error);
 
   torch::deploy::Package p = manager.loadPackage(path("SIMPLE", simple));
   // NOLINTNEXTLINE(hicpp-avoid-goto,cppcoreguidelines-avoid-goto)
-  EXPECT_THROW(p.loadPickle("some other", "garbage path"), c10::Error);
+  EXPECT_THROW(p.loadPickle("some other", "garbage path"), std::runtime_error);
 
   auto model = p.loadPickle("model", "model.pkl");
   // NOLINTNEXTLINE(hicpp-avoid-goto,cppcoreguidelines-avoid-goto)
-  EXPECT_THROW(model(at::IValue("unexpected input")), c10::Error);
+  EXPECT_THROW(model(at::IValue("unexpected input")), std::runtime_error);
 }
 
 TEST(TorchpyTest, AcquireMultipleSessionsInTheSamePackage) {
@@ -238,7 +240,7 @@ TEST(TorchpyTest, TensorSharingNotAllowed) {
   auto t = obj.toIValue().toTensor();
   // try to feed it to the other interpreter, should error
   // NOLINTNEXTLINE(hicpp-avoid-goto,cppcoreguidelines-avoid-goto)
-  ASSERT_THROW(I1.global("torch", "sigmoid")({t}), c10::Error);
+  ASSERT_THROW(I1.global("torch", "sigmoid")({t}), std::runtime_error);
 }
 
 TEST(TorchpyTest, TaggingRace) {
@@ -248,18 +250,18 @@ TEST(TorchpyTest, TaggingRace) {
   constexpr int64_t trials = 4;
   constexpr int64_t nthreads = 16;
   torch::deploy::InterpreterManager m(nthreads);
-  for (const auto n : c10::irange(trials)) {
+  for (const auto n : multipy::irange(trials)) {
     (void)n;
     at::Tensor t = torch::empty(2);
     std::atomic<int64_t> success(0);
     std::atomic<int64_t> failed(0);
     at::parallel_for(0, nthreads, 1, [&](int64_t begin, int64_t end) {
-      for (const auto i : c10::irange(begin, end)) {
+      for (const auto i : multipy::irange(begin, end)) {
         auto I = m.allInstances()[i].acquireSession();
         try {
           I.fromIValue(t);
           success++;
-        } catch (const c10::Error& e) {
+        } catch (const std::runtime_error& e) {
           failed++;
         }
       }
@@ -279,7 +281,7 @@ TEST(TorchpyTest, DisarmHook) {
   torch::deploy::InterpreterManager m(1);
   auto I = m.acquireOne();
   // NOLINTNEXTLINE(hicpp-avoid-goto,cppcoreguidelines-avoid-goto)
-  ASSERT_THROW(I.fromIValue(t), c10::Error); // NOT a segfault
+  ASSERT_THROW(I.fromIValue(t), std::runtime_error); // NOT a segfault
 }
 
 TEST(TorchpyTest, RegisterModule) {
@@ -300,7 +302,7 @@ TEST(TorchpyTest, FxModule) {
 
   std::vector<at::Tensor> outputs;
   auto input = torch::ones({5, 10});
-  for (const auto i : c10::irange(nthreads)) {
+  for (const auto i : multipy::irange(nthreads)) {
     (void)i;
     outputs.push_back(model({input.alias()}).toTensor());
   }
@@ -313,7 +315,7 @@ TEST(TorchpyTest, FxModule) {
   auto ref_output = ref_model.forward({input.alias()}).toTensor();
 
   // Compare all to reference
-  for (const auto i : c10::irange(nthreads)) {
+  for (const auto i : multipy::irange(nthreads)) {
     ASSERT_TRUE(ref_output.equal(outputs[i]));
   }
 }
@@ -332,7 +334,7 @@ def get_tensor():
   auto I2 = manager.acquireOne();
 
   auto objOnI =
-      I.global("test_module", "get_tensor")(at::ArrayRef<at::IValue>{});
+      I.global("test_module", "get_tensor")(multipy::ArrayRef<at::IValue>{});
   auto replicated = I.createMovable(objOnI);
   auto objOnI2 = I2.fromMovable(replicated);
 
@@ -345,7 +347,7 @@ def get_tensor():
 thread_local int in_another_module = 5;
 TEST(TorchpyTest, SharedLibraryLoad) {
   torch::deploy::InterpreterManager manager(2);
-  auto no_args = at::ArrayRef<torch::deploy::Obj>();
+  auto no_args = multipy::ArrayRef<torch::deploy::Obj>();
   for (auto& interp : manager.allInstances()) {
     auto I = interp.acquireSession();
 
@@ -379,7 +381,7 @@ TEST(TorchpyTest, SharedLibraryLoad) {
     try {
       I.global("libtest_deploy_lib", "raise_exception")(no_args);
       ASSERT_TRUE(false); // raise_exception did not throw?
-    } catch (std::exception& err) {
+    } catch (std::runtime_error& err) {
       ASSERT_TRUE(std::string(err.what()).find("yet") != std::string::npos);
     }
     in_another_module = 6;
@@ -453,7 +455,7 @@ result = torch.Tensor([1,2,3])
 #if HAS_NUMPY
 TEST(TorchpyTest, TestNumpy) {
   torch::deploy::InterpreterManager m(2);
-  auto noArgs = at::ArrayRef<torch::deploy::Obj>();
+  auto noArgs = multipy::ArrayRef<torch::deploy::Obj>();
   auto I = m.acquireOne();
   auto mat35 = I.global("numpy", "random").attr("rand")({3, 5});
   auto mat58 = I.global("numpy", "random").attr("rand")({5, 8});

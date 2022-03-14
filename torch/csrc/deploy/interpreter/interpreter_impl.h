@@ -3,6 +3,7 @@
 #include <ATen/ATen.h>
 #include <ATen/core/ivalue.h>
 #include <caffe2/serialize/inline_container.h>
+#include <torch/csrc/deploy/ArrayRef.h>
 
 /* Torch Deploy intentionally embeds multiple copies of c++ libraries
    providing python bindings necessary for torch::deploy users in the same
@@ -15,8 +16,8 @@
    the client application.
 
    It is safe to throw exception types that are defined once in
-   the context of the client application, such as c10::Error, which is defined
-   in libtorch, which isn't duplicated in torch::deploy interpreters.
+   the context of the client application, such as std::runtime_error,
+   which isn't duplicated in torch::deploy interpreters.
 
    ==> Use TORCH_DEPLOY_TRY, _SAFE_CATCH_RETHROW around _ALL_ torch::deploy APIs
 
@@ -30,20 +31,16 @@
 
 */
 #define TORCH_DEPLOY_TRY try {
-#define TORCH_DEPLOY_SAFE_CATCH_RETHROW                                        \
-  }                                                                            \
-  catch (std::exception & err) {                                               \
-    throw c10::Error(                                                          \
-        std::string(                                                           \
-            "Exception Caught inside torch::deploy embedded library: \n") +    \
-            err.what(),                                                        \
-        "");                                                                   \
-  }                                                                            \
-  catch (...) {                                                                \
-    throw c10::Error(                                                          \
-        std::string(                                                           \
-            "Unknown Exception Caught inside torch::deploy embedded library"), \
-        "");                                                                   \
+#define TORCH_DEPLOY_SAFE_CATCH_RETHROW                                    \
+  }                                                                        \
+  catch (std::exception & err) {                                           \
+    throw std::runtime_error(                                              \
+        "Exception Caught inside torch::deploy embedded library: \n" +     \
+        std::string(err.what()));                                          \
+  }                                                                        \
+  catch (...) {                                                            \
+    throw std::runtime_error(                                              \
+        "Unknown Exception Caught inside torch::deploy embedded library"); \
   }
 namespace torch {
 namespace deploy {
@@ -72,8 +69,8 @@ struct Obj {
       : interaction_(interaction), id_(id) {}
 
   at::IValue toIValue() const;
-  Obj operator()(at::ArrayRef<Obj> args);
-  Obj operator()(at::ArrayRef<at::IValue> args);
+  Obj operator()(multipy::ArrayRef<Obj> args);
+  Obj operator()(multipy::ArrayRef<at::IValue> args);
   Obj callKwargs(
       std::vector<at::IValue> args,
       std::unordered_map<std::string, c10::IValue> kwargs);
@@ -107,8 +104,8 @@ struct InterpreterSessionImpl {
 
   virtual at::IValue toIValue(Obj obj) const = 0;
 
-  virtual Obj call(Obj obj, at::ArrayRef<Obj> args) = 0;
-  virtual Obj call(Obj obj, at::ArrayRef<at::IValue> args) = 0;
+  virtual Obj call(Obj obj, multipy::ArrayRef<Obj> args) = 0;
+  virtual Obj call(Obj obj, multipy::ArrayRef<at::IValue> args) = 0;
   virtual Obj callKwargs(
       Obj obj,
       std::vector<at::IValue> args,
@@ -146,13 +143,13 @@ inline at::IValue Obj::toIValue() const {
   TORCH_DEPLOY_SAFE_CATCH_RETHROW
 }
 
-inline Obj Obj::operator()(at::ArrayRef<Obj> args) {
+inline Obj Obj::operator()(multipy::ArrayRef<Obj> args) {
   TORCH_DEPLOY_TRY
   return interaction_->call(*this, args);
   TORCH_DEPLOY_SAFE_CATCH_RETHROW
 }
 
-inline Obj Obj::operator()(at::ArrayRef<at::IValue> args) {
+inline Obj Obj::operator()(multipy::ArrayRef<at::IValue> args) {
   TORCH_DEPLOY_TRY
   return interaction_->call(*this, args);
   TORCH_DEPLOY_SAFE_CATCH_RETHROW
